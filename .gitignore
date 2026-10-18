@@ -1,0 +1,2 @@
+.venv/\n__pycache__/\n*.py[cod]\nnode_modules/\ndist/\n.env\n
+backend/app/__pycache__/*
