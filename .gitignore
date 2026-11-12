@@ -1,2 +1,9 @@
 .venv/\n__pycache__/\n*.py[cod]\nnode_modules/\ndist/\n.env\n
 backend/app/__pycache__/*
+.project
+.pydevproject
+backend/data_center/__pycache__/*
+backend/data_center/data/*
+backend/data_center/services/__pycache__/*
+backend/data_center/sources/__pycache__/*
+backend/data_center/storage/__pycache__/*
