@@ -1,0 +1,27 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Universe only",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "backend.data_center.main",
+            "args": ["--universe-only"],
+            "python": "C:\\Software\\Python314\\python.exe",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Collector (SPY, daily)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "backend.data_center.main",
+            "args": ["--symbols", "SPY", "--daily"],
+            "python": "C:\\Software\\Python314\\python.exe",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        }
+    ]
+}

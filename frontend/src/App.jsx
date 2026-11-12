@@ -13,7 +13,7 @@ export default function App(){
  async function loadUniverse(refresh=false){setUniverseLoading(true);setError('');try{const params=new URLSearchParams({asset_type:assetType,search:universeSearch,limit:'10000',offset:'0',refresh:String(refresh)});const r=await fetch(`${API}/api/universe?${params}`);const b=await r.json();if(!r.ok)throw Error(b.detail||'Could not load stock universe');setUniverse(b.results||[]);setUniverseCount(b.count||0)}catch(e){setError(e.message)}finally{setUniverseLoading(false)}}
  useEffect(()=>{if(tab==='universe')loadUniverse()},[tab,assetType]);
  function submitUniverseSearch(e){e.preventDefault();loadUniverse()}
- const v=data?.latest;
+ const v=data?.latest; 
  return <div className="shell"><header><div><div className="eyebrow">PERSONAL RESEARCH WORKSPACE</div><h1>Stock Research Lab</h1></div><span className="status">● Research mode · No orders placed</span></header><main>
  <section className="hero"><div><h2>Research before you trade.</h2><p>Daily trends, transparent swing signals, and reproducible strategy tests.</p></div><form onSubmit={e=>{e.preventDefault();analyze()}}><label>Ticker</label><input value={input} onChange={e=>setInput(e.target.value.toUpperCase())} maxLength="12"/><select value={period} onChange={e=>setPeriod(e.target.value)}><option value="1y">1 year</option><option value="2y">2 years</option><option value="5y">5 years</option><option value="10y">10 years</option></select><button disabled={loading}>{loading?'Loading…':'Analyze'}</button></form></section>
  {error&&<div className="error">{error}</div>}{loading&&<p className="muted">Loading data…</p>}

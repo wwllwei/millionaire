@@ -34,6 +34,49 @@ class DuckDBParquetStorage(BarStorage):
                 PRIMARY KEY (symbol, request_date)
             )
         """)
+        # Additive tables only: existing bar data and download progress are preserved.
+        self.con.execute("""
+            CREATE TABLE IF NOT EXISTS symbol_universe (
+                symbol VARCHAR PRIMARY KEY,
+                security_name VARCHAR,
+                listing_exchange VARCHAR,
+                security_type VARCHAR,
+                is_etf BOOLEAN,
+                source VARCHAR,
+                refreshed_at TIMESTAMPTZ
+            )
+        """)
+
+
+    def get_universe_last_refresh(self):
+        row = self.con.execute("SELECT MAX(refreshed_at) FROM symbol_universe").fetchone()
+        return row[0] if row else None
+
+    def get_symbols(self) -> list[str]:
+        rows = self.con.execute("SELECT symbol FROM symbol_universe ORDER BY symbol").fetchall()
+        return [row[0] for row in rows]
+
+    def replace_symbol_universe(self, df: pd.DataFrame) -> None:
+        """Atomically replace only the ticker metadata table, never market bars."""
+        required = ["symbol", "security_name", "listing_exchange", "security_type", "is_etf", "source", "refreshed_at"]
+        clean = df.copy()
+        for column in required:
+            if column not in clean.columns:
+                clean[column] = None
+        clean = clean[required].dropna(subset=["symbol"]).drop_duplicates(subset=["symbol"], keep="first")
+        if clean.empty:
+            raise ValueError("Refusing to replace ticker universe with an empty dataset")
+        self.con.register("incoming_symbol_universe", clean)
+        try:
+            self.con.execute("BEGIN TRANSACTION")
+            self.con.execute("DELETE FROM symbol_universe")
+            self.con.execute("INSERT INTO symbol_universe SELECT * FROM incoming_symbol_universe")
+            self.con.execute("COMMIT")
+        except Exception:
+            self.con.execute("ROLLBACK")
+            raise
+        finally:
+            self.con.unregister("incoming_symbol_universe")
 
     def get_completed_dates(self, symbol: str) -> set[date]:
         rows = self.con.execute("SELECT request_date FROM download_log WHERE symbol = ? AND status = 'complete'", [symbol]).fetchall()

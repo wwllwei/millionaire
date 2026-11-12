@@ -8,10 +8,11 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 PARQUET_DIR = DATA_DIR / "parquet"
 DB_PATH = DATA_DIR / "stock_research.duckdb"
+SYMBOLS_CSV_PATH = DATA_DIR / "symbols.csv"
 LOG_DIR = BASE_DIR / "logs"
 
 # DEFAULT_SYMBOLS = ["SPY", "QQQ", "IWM", "AAPL", "MSFT"]
-DEFAULT_SYMBOLS = ["META", "TSLA"]
+DEFAULT_SYMBOLS = ["AMZN", "NFLX", "NVDA"]
 NY = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
 
@@ -31,6 +32,7 @@ class CollectorConfig:
     data_dir: Path = DATA_DIR
     parquet_dir: Path = PARQUET_DIR
     db_path: Path = DB_PATH
+    symbols_csv_path: Path = SYMBOLS_CSV_PATH
     log_dir: Path = LOG_DIR
 
     def prepare_directories(self) -> None:

@@ -1,9 +1,41 @@
-.venv/\n__pycache__/\n*.py[cod]\nnode_modules/\ndist/\n.env\n
-backend/app/__pycache__/*
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environment files and local secrets
+.env
+.env.*
+!.env.example
+
+# Node / frontend build output
+node_modules/
+dist/
+build/
+coverage/
+
+# Local market data, databases, exports, and logs
+backend/data_center/data/
+backend/data_center/logs/
+backend/tickers.csv
+symbol_universe_test.csv
+*.duckdb
+*.duckdb-wal
+*.parquet
+*.tmp
+
+# IDE and operating system files
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
 .project
 .pydevproject
-backend/data_center/__pycache__/*
-backend/data_center/data/*
-backend/data_center/services/__pycache__/*
-backend/data_center/sources/__pycache__/*
-backend/data_center/storage/__pycache__/*
+.DS_Store
+Thumbs.db
