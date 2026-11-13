@@ -6,6 +6,7 @@ from datetime import date, timedelta
 
 from .config import CollectorConfig, DEFAULT_SYMBOLS
 from .services.ingestion import IngestionService
+from .services.company_fundamentals import CompanyFundamentalsService
 from .services.symbol_universe import SymbolUniverseService
 from .sources.ibkr_source import IBKRSource
 from .storage.duckdb_parquet import DuckDBParquetStorage
@@ -47,6 +48,16 @@ def parse_args() -> argparse.Namespace:
         "--universe-only",
         action="store_true",
         help="Refresh the ticker universe and exit without downloading market bars",
+    )
+    parser.add_argument(
+        "--refresh-fundamentals",
+        action="store_true",
+        help="Refresh company fundamentals for the selected symbols",
+    )
+    parser.add_argument(
+        "--fundamentals-only",
+        action="store_true",
+        help="Refresh fundamentals for the universe (or --symbols selection) and exit",
     )
     parser.add_argument(
         "--years", type=int, default=2, help="Calendar years to backfill (default: 2)"
@@ -132,7 +143,7 @@ def main() -> None:
             symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
             if not symbols:
                 raise ValueError("--symbols was provided but no valid symbols were found")
-        elif args.universe:
+        elif args.universe or args.fundamentals_only:
             symbols = universe.get_symbols()
         else:
             # Safety default: do not accidentally start a multi-thousand-symbol backfill.
@@ -140,6 +151,16 @@ def main() -> None:
             symbols = list(DEFAULT_SYMBOLS)
         if not symbols:
             raise ValueError("No symbols selected for collection")
+
+        if args.refresh_fundamentals or args.fundamentals_only:
+            count = CompanyFundamentalsService(storage).refresh(symbols)
+            logging.info(
+                "Company fundamentals refreshed: %s of %s symbols",
+                count,
+                len(symbols),
+            )
+        if args.fundamentals_only:
+            return
 
         today = date.today()
         end_day = today - timedelta(days=1)

@@ -46,6 +46,20 @@ class DuckDBParquetStorage(BarStorage):
                 refreshed_at TIMESTAMPTZ
             )
         """)
+        self.con.execute("""
+            CREATE TABLE IF NOT EXISTS company_fundamentals (
+                symbol VARCHAR PRIMARY KEY,
+                sector VARCHAR,
+                industry VARCHAR,
+                market_cap BIGINT,
+                pe_ratio DOUBLE,
+                forward_pe DOUBLE,
+                shares_outstanding BIGINT,
+                currency VARCHAR,
+                provider VARCHAR NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL
+            )
+        """)
 
 
     def get_universe_last_refresh(self):
@@ -77,6 +91,34 @@ class DuckDBParquetStorage(BarStorage):
             raise
         finally:
             self.con.unregister("incoming_symbol_universe")
+
+    def upsert_company_fundamentals(self, df: pd.DataFrame) -> None:
+        """Replace the current fundamentals snapshot for each supplied symbol."""
+        columns = [
+            "symbol", "sector", "industry", "market_cap", "pe_ratio",
+            "forward_pe", "shares_outstanding", "currency", "provider",
+            "updated_at",
+        ]
+        clean = df[columns].dropna(subset=["symbol"]).drop_duplicates(
+            subset=["symbol"], keep="last"
+        )
+        if clean.empty:
+            return
+        self.con.register("incoming_company_fundamentals", clean)
+        try:
+            self.con.execute("""
+                INSERT OR REPLACE INTO company_fundamentals
+                SELECT * FROM incoming_company_fundamentals
+            """)
+        finally:
+            self.con.unregister("incoming_company_fundamentals")
+
+    def get_recent_fundamentals_symbols(self, since) -> set[str]:
+        rows = self.con.execute(
+            "SELECT symbol FROM company_fundamentals WHERE updated_at >= ?",
+            [since],
+        ).fetchall()
+        return {row[0] for row in rows}
 
     def get_completed_dates(self, symbol: str) -> set[date]:
         rows = self.con.execute("SELECT request_date FROM download_log WHERE symbol = ? AND status = 'complete'", [symbol]).fetchall()
