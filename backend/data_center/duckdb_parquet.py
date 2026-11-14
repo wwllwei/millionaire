@@ -9,7 +9,7 @@ import pandas as pd
 
 from ..config import CollectorConfig
 from ..models import BAR_COLUMNS
-from .base import BarStorage
+from .storage_base import BarStorage
 
 class DuckDBParquetStorage(BarStorage):
     def __init__(self, config: CollectorConfig):

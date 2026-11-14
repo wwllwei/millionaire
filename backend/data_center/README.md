@@ -12,9 +12,8 @@ data_center/
   sources/
     base.py                 Market-data provider interface
     ibkr_source.py          IBKR connection, requests, timestamp normalization
-  storage/
-    base.py                 Storage interface
-    duckdb_parquet.py       DuckDB schema, progress log, deduplication, Parquet export
+  storage_base.py           Storage interface
+  duckdb_parquet.py         DuckDB schema, progress log, deduplication, Parquet export
   services/
     ingestion.py            NYSE calendar, backfill/daily ingestion workflow
   data/                     Created at runtime: DuckDB and Parquet files

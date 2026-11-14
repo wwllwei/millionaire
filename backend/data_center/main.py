@@ -9,7 +9,7 @@ from .services.ingestion import IngestionService
 from .services.company_fundamentals import CompanyFundamentalsService
 from .services.symbol_universe import SymbolUniverseService
 from .sources.ibkr_source import IBKRSource
-from .storage.duckdb_parquet import DuckDBParquetStorage
+from .duckdb_parquet import DuckDBParquetStorage
 
 
 def setup_logging(config: CollectorConfig) -> None:

@@ -15,7 +15,7 @@ from ..config import CollectorConfig, DEFAULT_SYMBOLS
 from .get_us_tickers import USER_AGENT as SEC_USER_AGENT
 
 if TYPE_CHECKING:
-    from ..storage.duckdb_parquet import DuckDBParquetStorage
+    from ..duckdb_parquet import DuckDBParquetStorage
 
 
 class SymbolUniverseService:

@@ -9,7 +9,7 @@ import pandas_market_calendars as mcal
 from ..config import CollectorConfig, NY
 from ..models import DownloadResult
 from ..sources.base import MarketDataSource
-from ..storage.base import BarStorage
+from ..storage_base import BarStorage
 
 NYSE_CALENDAR = mcal.get_calendar("NYSE")
 

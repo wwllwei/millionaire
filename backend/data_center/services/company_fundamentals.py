@@ -10,7 +10,7 @@ import yfinance as yf
 from yfinance.exceptions import YFRateLimitError
 
 if TYPE_CHECKING:
-    from ..storage.duckdb_parquet import DuckDBParquetStorage
+    from ..duckdb_parquet import DuckDBParquetStorage
 
 
 class CompanyFundamentalsService:
