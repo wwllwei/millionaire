@@ -7,8 +7,8 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 
-from ..config import CollectorConfig
-from ..models import BAR_COLUMNS
+from .config import CollectorConfig
+from .models import BAR_COLUMNS
 from .storage_base import BarStorage
 
 class DuckDBParquetStorage(BarStorage):
@@ -58,6 +58,16 @@ class DuckDBParquetStorage(BarStorage):
                 currency VARCHAR,
                 provider VARCHAR NOT NULL,
                 updated_at TIMESTAMPTZ NOT NULL
+            )
+        """)
+        self.con.execute("""
+            CREATE TABLE IF NOT EXISTS index_constituents (
+                index_code VARCHAR NOT NULL,
+                symbol VARCHAR NOT NULL,
+                company_name VARCHAR,
+                provider VARCHAR NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL,
+                PRIMARY KEY (index_code, symbol)
             )
         """)
 
@@ -119,6 +129,59 @@ class DuckDBParquetStorage(BarStorage):
             [since],
         ).fetchall()
         return {row[0] for row in rows}
+
+    def replace_index_constituents(self, index_code: str, df: pd.DataFrame) -> None:
+        columns = ["index_code", "symbol", "company_name", "provider", "updated_at"]
+        clean = df[columns].dropna(subset=["index_code", "symbol"]).drop_duplicates(
+            subset=["index_code", "symbol"], keep="last"
+        )
+        if clean.empty:
+            raise ValueError(f"Refusing to replace {index_code} with an empty index list")
+        self.con.register("incoming_index_constituents", clean)
+        try:
+            self.con.execute("BEGIN TRANSACTION")
+            self.con.execute("DELETE FROM index_constituents WHERE index_code = ?", [index_code])
+            self.con.execute("""
+                INSERT INTO index_constituents
+                SELECT * FROM incoming_index_constituents
+            """)
+            self.con.execute("COMMIT")
+        except Exception:
+            self.con.execute("ROLLBACK")
+            raise
+        finally:
+            self.con.unregister("incoming_index_constituents")
+
+    def get_companies_by_index(self, index_code: str) -> list[dict[str, str | None]]:
+        rows = self.con.execute("""
+            SELECT symbol, company_name
+            FROM index_constituents
+            WHERE index_code = ?
+            ORDER BY symbol
+        """, [index_code]).fetchall()
+        return [{"symbol": row[0], "company_name": row[1]} for row in rows]
+
+    def get_symbols_for_indexes(
+        self,
+        index_codes: list[str],
+        listing_exchanges: list[str],
+    ) -> list[str]:
+        """Return index members matched to the saved exchange-aware universe."""
+        if not index_codes or not listing_exchanges:
+            return []
+        index_placeholders = ", ".join("?" for _ in index_codes)
+        exchange_placeholders = ", ".join("?" for _ in listing_exchanges)
+        rows = self.con.execute(f"""
+            SELECT DISTINCT universe.symbol
+            FROM symbol_universe AS universe
+            JOIN index_constituents AS constituent
+              ON REPLACE(UPPER(universe.symbol), '.', '-') =
+                 REPLACE(UPPER(constituent.symbol), '.', '-')
+            WHERE constituent.index_code IN ({index_placeholders})
+              AND UPPER(universe.listing_exchange) IN ({exchange_placeholders})
+            ORDER BY universe.symbol
+        """, [*index_codes, *(exchange.upper() for exchange in listing_exchanges)]).fetchall()
+        return [row[0] for row in rows]
 
     def get_completed_dates(self, symbol: str) -> set[date]:
         rows = self.con.execute("SELECT request_date FROM download_log WHERE symbol = ? AND status = 'complete'", [symbol]).fetchall()

@@ -7,6 +7,7 @@ from datetime import date, timedelta
 from .config import CollectorConfig, DEFAULT_SYMBOLS
 from .services.ingestion import IngestionService
 from .services.company_fundamentals import CompanyFundamentalsService
+from .services.index_constituents import IndexConstituentService
 from .services.symbol_universe import SymbolUniverseService
 from .sources.ibkr_source import IBKRSource
 from .duckdb_parquet import DuckDBParquetStorage
@@ -40,6 +41,16 @@ def parse_args() -> argparse.Namespace:
         help="Collect every symbol in the saved US common-stock/ETF universe (large, long-running job)",
     )
     parser.add_argument(
+        "--indexes",
+        default=None,
+        help="Collect members of comma-separated saved indexes, e.g. SP500,NASDAQ100 (NYSE and Nasdaq listings by default)",
+    )
+    parser.add_argument(
+        "--exchanges",
+        default="NYSE,Nasdaq",
+        help="Listing exchanges to include with --indexes, e.g. NYSE,Nasdaq",
+    )
+    parser.add_argument(
         "--refresh-universe",
         action="store_true",
         help="Force a refresh of the ticker universe before collection",
@@ -58,6 +69,16 @@ def parse_args() -> argparse.Namespace:
         "--fundamentals-only",
         action="store_true",
         help="Refresh fundamentals for the universe (or --symbols selection) and exit",
+    )
+    parser.add_argument(
+        "--refresh-indexes",
+        action="store_true",
+        help="Refresh supported index constituent lists",
+    )
+    parser.add_argument(
+        "--indexes-only",
+        action="store_true",
+        help="Refresh index constituent lists and exit",
     )
     parser.add_argument(
         "--years", type=int, default=2, help="Calendar years to backfill (default: 2)"
@@ -87,6 +108,10 @@ def main() -> None:
 
         --universe: Collect every saved US-listed common stock and ETF.
                     This can involve thousands of symbols and a very large backfill.
+
+        --indexes: Collect current members of one or more saved indexes.
+                   Defaults to listings marked NYSE or Nasdaq; --exchanges can
+                   override that filter. --symbols takes precedence.
 
         --refresh-universe: Force refresh the ticker list from Nasdaq Trader.
                             The universe is also refreshed automatically when 7 days old.
@@ -126,23 +151,55 @@ def main() -> None:
     args = parse_args()
     if args.years < 1:
         raise ValueError("--years must be at least 1")
-    if args.symbols is not None and args.universe:
-        logging.warning("Both --symbols and --universe were supplied; --symbols takes precedence")
+    if args.symbols is not None and (args.universe or args.indexes is not None):
+        logging.warning("--symbols was also supplied; it takes precedence over --universe/--indexes")
+    elif args.indexes is not None and args.universe:
+        logging.warning("Both --indexes and --universe were supplied; --indexes takes precedence")
 
     config = CollectorConfig(ib_port=args.port, ib_client_id=args.client_id)
     setup_logging(config)
     storage = DuckDBParquetStorage(config)
     universe = SymbolUniverseService(config, storage)
     try:
-        universe.refresh(force=args.refresh_universe or args.universe_only)
+        if not args.indexes_only:
+            universe.refresh(force=args.refresh_universe or args.universe_only)
         if args.universe_only:
             logging.info("Ticker-universe refresh finished; no IBKR connection was made")
+            return
+
+        if args.refresh_indexes or args.indexes_only:
+            refreshed = IndexConstituentService(storage).refresh_all()
+            logging.info("Index constituent records refreshed: %s", refreshed)
+        if args.indexes_only:
             return
 
         if args.symbols is not None:
             symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
             if not symbols:
                 raise ValueError("--symbols was provided but no valid symbols were found")
+        elif args.indexes is not None:
+            index_codes = [value.strip() for value in args.indexes.split(",") if value.strip()]
+            exchanges = [value.strip() for value in args.exchanges.split(",") if value.strip()]
+            if not index_codes:
+                raise ValueError("--indexes was provided but no index names were found")
+            if not exchanges:
+                raise ValueError("--exchanges was provided but no exchanges were found")
+            symbols = IndexConstituentService(storage).get_symbols_by_indexes(
+                index_codes,
+                exchanges,
+            )
+            if not symbols:
+                raise ValueError(
+                    "No index members matched the saved symbol universe for the requested "
+                    "exchanges. Run --indexes-only to refresh index lists and "
+                    "--universe-only to refresh listing metadata."
+                )
+            logging.info(
+                "Selected %s symbols from indexes %s on exchanges %s",
+                len(symbols),
+                ",".join(index_codes),
+                ",".join(exchanges),
+            )
         elif args.universe or args.fundamentals_only:
             symbols = universe.get_symbols()
         else:
@@ -174,7 +231,10 @@ def main() -> None:
         logging.info(
             "Mode=%s Symbols=%s Count=%s Range=%s to %s",
             "daily" if args.daily else "backfill",
-            "--symbols override" if args.symbols is not None else ("saved universe" if args.universe else "DEFAULT_SYMBOLS"),
+            "--symbols override" if args.symbols is not None else (
+                "index members" if args.indexes is not None else
+                ("saved universe" if args.universe else "DEFAULT_SYMBOLS")
+            ),
             len(symbols),
             start_day,
             end_day,

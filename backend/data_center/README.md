@@ -1,6 +1,6 @@
 # Stock Research Lab — data_center
 
-Modular version of `data_collector_updated.py`. The source, ingestion workflow, and storage are separated so another provider (for example yfinance) can later implement `MarketDataSource` and write into the same storage layer.
+The source, ingestion workflow, and storage are separated so another provider (for example yfinance) can later implement `MarketDataSource` and write into the same storage layer.
 
 ## Structure
 
@@ -16,6 +16,7 @@ data_center/
   duckdb_parquet.py         DuckDB schema, progress log, deduplication, Parquet export
   services/
     ingestion.py            NYSE calendar, backfill/daily ingestion workflow
+    index_constituents.py   Current S&P 500, DJIA, and Nasdaq-100 membership
   data/                     Created at runtime: DuckDB and Parquet files
   logs/                     Created at runtime
 ```
@@ -25,7 +26,7 @@ data_center/
 Use the same Python environment as the existing collector:
 
 ```bash
-pip install ib_async duckdb pandas pandas-market-calendars pyarrow
+pip install -r data_center/requirements.txt
 ```
 
 ## Run from the directory containing `data_center/`
@@ -47,6 +48,32 @@ Choose symbols, TWS port, or client ID:
 ```bash
 python -m data_center.main --symbols SPY,QQQ,AAPL --port 7497 --client-id 17
 ```
+
+Refresh the supported index constituent lists without connecting to IBKR:
+
+```bash
+python -m data_center.main --indexes-only
+```
+
+The supported codes are `SP500`, `DJIA`, `NASDAQ100`, `RUSSELL1000`,
+`RUSSELL2000`, and `RUSSELL3000`. In Python, query the saved members with
+`IndexConstituentService(storage).get_companies_by_index("R2000")`. Russell
+1000 membership is sourced from a current Wikipedia component list. Russell
+2000 and 3000 lists use IWM and IWV ETF holdings as public proxies, not official
+FTSE Russell constituent files. These are current lists, not historical
+membership data; the provider is recorded per row.
+
+Collect one-minute bars for index members that are listed on NYSE or Nasdaq:
+
+```bash
+python -m data_center.main --indexes SP500,NASDAQ100 --daily
+```
+
+Use `--indexes SP500` to start with one index. Index-based selection joins the
+saved index constituents to `symbol_universe`, then filters by `listing_exchange`.
+If either list is empty, refresh both datasets first with `--universe-only` and
+`--indexes-only`. Omitting `--daily` runs the normal two-year backfill, which
+can take a long time for a large index selection.
 
 ## Behavior preserved
 

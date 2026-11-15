@@ -4,3 +4,4 @@ pandas
 pandas-market-calendars
 pyarrow
 yfinance>=0.2.50
+lxml
