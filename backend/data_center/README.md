@@ -75,6 +75,29 @@ If either list is empty, refresh both datasets first with `--universe-only` and
 `--indexes-only`. Omitting `--daily` runs the normal two-year backfill, which
 can take a long time for a large index selection.
 
+Every market-data collection saves its symbol list and requested date range in
+DuckDB. If the process is interrupted or errors, resume the latest unfinished
+collection with:
+
+```bash
+python -m data_center.main --resume
+```
+
+The resume command uses the saved job snapshot and skips sessions already
+marked `complete` in `download_log`. It retries failed or unfinished sessions.
+For an original `--daily` run, it skips completed sessions during resume instead
+of deliberately downloading the same recent week again.
+
+For older runs that predate job snapshots, repeat the original symbol selection
+and explicit date range. For example, the interrupted S&P 500 run in the log can
+be continued with:
+
+```bash
+python -m data_center.main --indexes SP500 --start-date 2024-11-14 --end-date 2026-11-13
+```
+
+The `download_log` skips its already completed symbol/session pairs.
+
 ## Behavior preserved
 
 - One-minute TRADES bars during regular trading hours.

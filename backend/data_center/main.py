@@ -51,6 +51,23 @@ def parse_args() -> argparse.Namespace:
         help="Listing exchanges to include with --indexes, e.g. NYSE,Nasdaq",
     )
     parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume the latest unfinished IBKR collection using its saved symbols and date range",
+    )
+    parser.add_argument(
+        "--start-date",
+        type=date.fromisoformat,
+        default=None,
+        help="Explicit first calendar date, YYYY-MM-DD (use with --end-date)",
+    )
+    parser.add_argument(
+        "--end-date",
+        type=date.fromisoformat,
+        default=None,
+        help="Explicit last calendar date, YYYY-MM-DD (use with --start-date)",
+    )
+    parser.add_argument(
         "--refresh-universe",
         action="store_true",
         help="Force a refresh of the ticker universe before collection",
@@ -126,6 +143,14 @@ def main() -> None:
         --daily: Refresh data for the recent seven calendar days
                  instead of performing a historical backfill.
 
+        --resume: Resume the latest unfinished collection. The saved symbol
+                  list and date range are reused; completed symbol/date sessions
+                  are skipped.
+
+        --start-date / --end-date: Set an exact date range for a collection.
+                  Useful to replay a run created before job snapshots existed;
+                  completed sessions in download_log will be skipped.
+
         --port: TWS or IB Gateway API port. Defaults to the configured 4002.
 
         --client-id: Unique IBKR API client ID. Defaults to 17.
@@ -144,13 +169,35 @@ def main() -> None:
         - TWS or IB Gateway must be running and connected.
         - The collector does not automatically reconnect if the
           connection is lost. Reconnect manually and rerun the collector.
-        - Previously completed dates can be resumed using download_log.
+        - Job snapshots and download_log allow collections to resume with --resume.
         - The collection end date is yesterday.
     """
 
     args = parse_args()
-    if args.years < 1:
+    has_start_date = args.start_date is not None
+    has_end_date = args.end_date is not None
+    if has_start_date != has_end_date:
+        raise ValueError("--start-date and --end-date must be supplied together")
+    if has_start_date and args.start_date > args.end_date:
+        raise ValueError("--start-date must be on or before --end-date")
+    if args.daily and has_start_date:
+        raise ValueError("Use either --daily or an explicit --start-date/--end-date range")
+    if args.years < 1 and not args.resume and not has_start_date:
         raise ValueError("--years must be at least 1")
+    if args.resume and any((
+        args.symbols is not None,
+        args.indexes is not None,
+        args.universe,
+        args.daily,
+        args.refresh_fundamentals,
+        args.fundamentals_only,
+        args.refresh_indexes,
+        args.indexes_only,
+        args.universe_only,
+        args.refresh_universe,
+        has_start_date,
+    )):
+        raise ValueError("--resume uses the saved collection plan; remove other selection/refresh flags")
     if args.symbols is not None and (args.universe or args.indexes is not None):
         logging.warning("--symbols was also supplied; it takes precedence over --universe/--indexes")
     elif args.indexes is not None and args.universe:
@@ -161,80 +208,124 @@ def main() -> None:
     storage = DuckDBParquetStorage(config)
     universe = SymbolUniverseService(config, storage)
     try:
-        if not args.indexes_only:
-            universe.refresh(force=args.refresh_universe or args.universe_only)
-        if args.universe_only:
-            logging.info("Ticker-universe refresh finished; no IBKR connection was made")
-            return
-
-        if args.refresh_indexes or args.indexes_only:
-            refreshed = IndexConstituentService(storage).refresh_all()
-            logging.info("Index constituent records refreshed: %s", refreshed)
-        if args.indexes_only:
-            return
-
-        if args.symbols is not None:
-            symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
-            if not symbols:
-                raise ValueError("--symbols was provided but no valid symbols were found")
-        elif args.indexes is not None:
-            index_codes = [value.strip() for value in args.indexes.split(",") if value.strip()]
-            exchanges = [value.strip() for value in args.exchanges.split(",") if value.strip()]
-            if not index_codes:
-                raise ValueError("--indexes was provided but no index names were found")
-            if not exchanges:
-                raise ValueError("--exchanges was provided but no exchanges were found")
-            symbols = IndexConstituentService(storage).get_symbols_by_indexes(
-                index_codes,
-                exchanges,
-            )
-            if not symbols:
+        if args.resume:
+            job = storage.get_latest_incomplete_collection_job()
+            if job is None:
                 raise ValueError(
-                    "No index members matched the saved symbol universe for the requested "
-                    "exchanges. Run --indexes-only to refresh index lists and "
-                    "--universe-only to refresh listing metadata."
+                    "No unfinished collection snapshot is available. For a run "
+                    "started before snapshots were added, repeat its original "
+                    "selection and date range; completed sessions are skipped "
+                    "from download_log."
                 )
-            logging.info(
-                "Selected %s symbols from indexes %s on exchanges %s",
-                len(symbols),
-                ",".join(index_codes),
-                ",".join(exchanges),
-            )
-        elif args.universe or args.fundamentals_only:
-            symbols = universe.get_symbols()
-        else:
-            # Safety default: do not accidentally start a multi-thousand-symbol backfill.
-            # Use --universe explicitly to collect the full saved ticker universe.
-            symbols = list(DEFAULT_SYMBOLS)
-        if not symbols:
-            raise ValueError("No symbols selected for collection")
-
-        if args.refresh_fundamentals or args.fundamentals_only:
-            count = CompanyFundamentalsService(storage).refresh(symbols)
-            logging.info(
-                "Company fundamentals refreshed: %s of %s symbols",
-                count,
-                len(symbols),
-            )
-        if args.fundamentals_only:
-            return
-
-        today = date.today()
-        end_day = today - timedelta(days=1)
-        if args.daily:
-            start_day = today - timedelta(days=7)
-            refresh_days = 7
-        else:
-            start_day = today - timedelta(days=365 * args.years)
+            job_id = job["job_id"]
+            symbols = job["symbols"]
+            start_day = job["start_day"]
+            end_day = job["end_day"]
+            # On resume, successful dates from an original --daily run are skipped.
             refresh_days = 0
+            storage.set_collection_job_status(job_id, "running")
+            logging.info(
+                "Resuming collection %s: %s symbols, %s to %s",
+                job_id,
+                len(symbols),
+                start_day,
+                end_day,
+            )
+        else:
+            if not args.indexes_only:
+                universe.refresh(force=args.refresh_universe or args.universe_only)
+            if args.universe_only:
+                logging.info("Ticker-universe refresh finished; no IBKR connection was made")
+                return
 
+            if args.refresh_indexes or args.indexes_only:
+                refreshed = IndexConstituentService(storage).refresh_all()
+                logging.info("Index constituent records refreshed: %s", refreshed)
+            if args.indexes_only:
+                return
+
+            if args.symbols is not None:
+                symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+                if not symbols:
+                    raise ValueError("--symbols was provided but no valid symbols were found")
+            elif args.indexes is not None:
+                index_codes = [value.strip() for value in args.indexes.split(",") if value.strip()]
+                exchanges = [value.strip() for value in args.exchanges.split(",") if value.strip()]
+                if not index_codes:
+                    raise ValueError("--indexes was provided but no index names were found")
+                if not exchanges:
+                    raise ValueError("--exchanges was provided but no exchanges were found")
+                symbols = IndexConstituentService(storage).get_symbols_by_indexes(
+                    index_codes,
+                    exchanges,
+                )
+                if not symbols:
+                    raise ValueError(
+                        "No index members matched the saved symbol universe for the requested "
+                        "exchanges. Run --indexes-only to refresh index lists and "
+                        "--universe-only to refresh listing metadata."
+                    )
+                logging.info(
+                    "Selected %s symbols from indexes %s on exchanges %s",
+                    len(symbols),
+                    ",".join(index_codes),
+                    ",".join(exchanges),
+                )
+            elif args.universe or args.fundamentals_only:
+                symbols = universe.get_symbols()
+            else:
+                # Safety default: do not accidentally start a multi-thousand-symbol backfill.
+                # Use --universe explicitly to collect the full saved ticker universe.
+                symbols = list(DEFAULT_SYMBOLS)
+            if not symbols:
+                raise ValueError("No symbols selected for collection")
+
+            if args.refresh_fundamentals or args.fundamentals_only:
+                count = CompanyFundamentalsService(storage).refresh(symbols)
+                logging.info(
+                    "Company fundamentals refreshed: %s of %s symbols",
+                    count,
+                    len(symbols),
+                )
+            if args.fundamentals_only:
+                return
+
+            if has_start_date:
+                start_day = args.start_date
+                end_day = args.end_date
+                refresh_days = 0
+            elif args.daily:
+                today = date.today()
+                end_day = today - timedelta(days=1)
+                start_day = today - timedelta(days=7)
+                refresh_days = 7
+            else:
+                today = date.today()
+                end_day = today - timedelta(days=1)
+                start_day = today - timedelta(days=365 * args.years)
+                refresh_days = 0
+            job_id = storage.create_collection_job(
+                symbols,
+                start_day,
+                end_day,
+                refresh_recent_days=refresh_days,
+            )
+
+        if args.resume:
+            mode_label = "resume"
+            selection_label = "saved collection snapshot"
+        else:
+            mode_label = "daily" if args.daily else "backfill"
+            selection_label = (
+                "--symbols override" if args.symbols is not None else (
+                    "index members" if args.indexes is not None else
+                    ("saved universe" if args.universe else "DEFAULT_SYMBOLS")
+                )
+            )
         logging.info(
             "Mode=%s Symbols=%s Count=%s Range=%s to %s",
-            "daily" if args.daily else "backfill",
-            "--symbols override" if args.symbols is not None else (
-                "index members" if args.indexes is not None else
-                ("saved universe" if args.universe else "DEFAULT_SYMBOLS")
-            ),
+            mode_label,
+            selection_label,
             len(symbols),
             start_day,
             end_day,
@@ -246,7 +337,16 @@ def main() -> None:
             source.connect()
             service = IngestionService(source, storage, config)
             service.run(symbols, start_day, end_day, refresh_recent_days=refresh_days)
+            storage.set_collection_job_status(job_id, "completed")
             logging.info("All requested symbols completed successfully.")
+        except KeyboardInterrupt:
+            storage.set_collection_job_status(job_id, "interrupted")
+            logging.warning("Collection interrupted; resume it with --resume")
+            raise
+        except Exception:
+            storage.set_collection_job_status(job_id, "failed")
+            logging.exception("Collection stopped before completion; resume it with --resume")
+            raise
         finally:
             source.disconnect()
     finally:

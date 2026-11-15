@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import logging
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 import duckdb
 import pandas as pd
@@ -68,6 +70,18 @@ class DuckDBParquetStorage(BarStorage):
                 provider VARCHAR NOT NULL,
                 updated_at TIMESTAMPTZ NOT NULL,
                 PRIMARY KEY (index_code, symbol)
+            )
+        """)
+        self.con.execute("""
+            CREATE TABLE IF NOT EXISTS collection_jobs (
+                job_id VARCHAR PRIMARY KEY,
+                symbols_json VARCHAR NOT NULL,
+                start_day DATE NOT NULL,
+                end_day DATE NOT NULL,
+                refresh_recent_days INTEGER NOT NULL DEFAULT 0,
+                status VARCHAR NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL
             )
         """)
 
@@ -182,6 +196,58 @@ class DuckDBParquetStorage(BarStorage):
             ORDER BY universe.symbol
         """, [*index_codes, *(exchange.upper() for exchange in listing_exchanges)]).fetchall()
         return [row[0] for row in rows]
+
+    def create_collection_job(
+        self,
+        symbols: list[str],
+        start_day: date,
+        end_day: date,
+        refresh_recent_days: int = 0,
+    ) -> str:
+        job_id = str(uuid4())
+        now = datetime.now(timezone.utc)
+        self.con.execute("""
+            INSERT INTO collection_jobs
+                (job_id, symbols_json, start_day, end_day, refresh_recent_days,
+                 status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 'running', ?, ?)
+        """, [
+            job_id,
+            json.dumps(symbols),
+            start_day,
+            end_day,
+            refresh_recent_days,
+            now,
+            now,
+        ])
+        return job_id
+
+    def get_latest_incomplete_collection_job(self) -> dict | None:
+        row = self.con.execute("""
+            SELECT job_id, symbols_json, start_day, end_day, refresh_recent_days,
+                   status
+            FROM collection_jobs
+            WHERE status <> 'completed'
+            ORDER BY created_at DESC
+            LIMIT 1
+        """).fetchone()
+        if row is None:
+            return None
+        return {
+            "job_id": row[0],
+            "symbols": json.loads(row[1]),
+            "start_day": row[2],
+            "end_day": row[3],
+            "refresh_recent_days": row[4],
+            "status": row[5],
+        }
+
+    def set_collection_job_status(self, job_id: str, status: str) -> None:
+        self.con.execute("""
+            UPDATE collection_jobs
+            SET status = ?, updated_at = ?
+            WHERE job_id = ?
+        """, [status, datetime.now(timezone.utc), job_id])
 
     def get_completed_dates(self, symbol: str) -> set[date]:
         rows = self.con.execute("SELECT request_date FROM download_log WHERE symbol = ? AND status = 'complete'", [symbol]).fetchall()
